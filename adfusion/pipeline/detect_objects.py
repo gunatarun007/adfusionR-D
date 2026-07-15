@@ -47,7 +47,7 @@ class ObjectDetectionStage(BaseStage):
     def _gdino_predict(self, gdino_model, image_path: Path, caption: str,
                        box_threshold: float, text_threshold: float, device: str):
         """Run GroundingDINO inference; returns boxes in [x1,y1,x2,y2] pixel coords."""
-        import torchvision.transforms as T
+        import groundingdino.datasets.transforms as T
         from groundingdino.util.inference import predict
         from PIL import Image as PILImage
 
