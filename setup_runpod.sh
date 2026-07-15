@@ -1,20 +1,21 @@
 #!/bin/bash
 # ==============================================================================
 # ADFUSION RUNPOD INITIALIZATION & SETUP SCRIPT (Idempotent)
-# This script sets up a fresh RunPod Linux GPU instance for VPP execution.
+# Backend: GroundingDINO + SAM2 — fully open-source, no HF token required
 # ==============================================================================
 
 set -eo pipefail
 
 echo "=============================================================="
-echo "          STARTING RUNPOD PLATFORM INITIALIZATION"
+echo "       STARTING RUNPOD PLATFORM INITIALIZATION"
+echo "       Backend: GroundingDINO + SAM2"
 echo "=============================================================="
 
-# 1. Update Apt-Get & Install System Packages
+# 1. System packages
 echo "[*] Updating apt repositories..."
 apt-get update -y
 
-echo "[*] Installing critical system dependencies (FFmpeg, OpenCV libs)..."
+echo "[*] Installing system dependencies..."
 apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
@@ -29,42 +30,65 @@ apt-get install -y --no-install-recommends \
     zip \
     unzip
 
-# 2. Upgrade Python Package Installer Stack
+# 2. Set CUDA_HOME for GroundingDINO CUDA extension compilation
+export CUDA_HOME=${CUDA_HOME:-/usr/local/cuda}
+echo "[*] CUDA_HOME = $CUDA_HOME"
+
+# 3. Upgrade pip / install uv
 echo "[*] Upgrading pip..."
-python -m pip install --upgrade --no-cache-dir pip --break-system-packages || python -m pip install --upgrade --no-cache-dir pip
+python -m pip install --upgrade --no-cache-dir pip --break-system-packages || \
+    python -m pip install --upgrade --no-cache-dir pip
 
-echo "[*] Installing uv for ultra-fast pip execution..."
-python -m pip install --no-cache-dir uv --break-system-packages || python -m pip install --no-cache-dir uv
+echo "[*] Installing uv..."
+python -m pip install --no-cache-dir uv --break-system-packages || \
+    python -m pip install --no-cache-dir uv
 
-# 3. Initialize third_party directories if not already populated
-echo "[*] Initializing third_party framework layout..."
+# 4. Initialise third_party directories
+echo "[*] Initialising third_party layout..."
 mkdir -p third_party/depth_anything3
 mkdir -p third_party/sam3d
 mkdir -p third_party/wan22_vace
 
-# 4. Install python dependencies with uv if available, falling back to standard pip
+# 5. Core python dependencies
 if command -v uv &> /dev/null; then
-    echo "[*] Installing dependencies from requirements.txt via uv..."
+    echo "[*] Installing requirements via uv..."
     uv pip install --system --no-cache-dir -r requirements.txt
-    
-    echo "[*] Installing third_party/sam3 in editable mode via uv..."
-    uv pip install --system --no-cache-dir -e third_party/sam3
 else
-    echo "[*] Installing dependencies from requirements.txt via pip..."
-    pip install --no-cache-dir -r requirements.txt --break-system-packages || pip install --no-cache-dir -r requirements.txt
-    
-    echo "[*] Installing third_party/sam3 in editable mode via pip..."
-    pip install --no-cache-dir -e third_party/sam3 --break-system-packages || pip install --no-cache-dir -e third_party/sam3
+    echo "[*] Installing requirements via pip..."
+    pip install --no-cache-dir -r requirements.txt \
+        --break-system-packages || \
+        pip install --no-cache-dir -r requirements.txt
 fi
 
-# 5. Verify System Environment
-echo "[*] Running system diagnostics..."
-python utils/verify_env.py
+# 6. Install third_party/sam2 in editable mode
+echo "[*] Installing SAM2 from third_party/sam2..."
+if command -v uv &> /dev/null; then
+    uv pip install --system --no-cache-dir -e third_party/sam2
+else
+    pip install --no-cache-dir -e third_party/sam2 \
+        --break-system-packages || \
+        pip install --no-cache-dir -e third_party/sam2
+fi
 
-# 6. Model Download Check
-echo "[*] Running model downloader to verify checkpoints..."
+# 7. Install third_party/GroundingDINO in editable mode
+# Requires CUDA_HOME set correctly to compile custom CUDA extensions
+echo "[*] Installing GroundingDINO from third_party/GroundingDINO..."
+if command -v uv &> /dev/null; then
+    uv pip install --system --no-cache-dir -e third_party/GroundingDINO
+else
+    pip install --no-cache-dir -e third_party/GroundingDINO \
+        --break-system-packages || \
+        pip install --no-cache-dir -e third_party/GroundingDINO
+fi
+
+# 8. Download model checkpoints (public URLs, no token needed)
+echo "[*] Downloading model checkpoints..."
 python utils/download_models.py
 
+# 9. Verify environment
+echo "[*] Running environment diagnostics..."
+python utils/verify_env.py
+
 echo "=============================================================="
-echo "     RUNPOD INITIALIZATION COMPLETE. READY FOR PIPELINE."
+echo "    RUNPOD INITIALIZATION COMPLETE. READY FOR PIPELINE."
 echo "=============================================================="

@@ -1,103 +1,112 @@
 # RunPod Validation Guide (Sprint 1)
 
-This document provides a step-by-step procedure to validate the AdFusion VPP research pipeline on a real NVIDIA Linux GPU instance on RunPod.
+Backend: **GroundingDINO + SAM2** — fully open-source, no Hugging Face token required.
 
 ---
 
-## 1. Environment Requirements & Recommendations
+## 1. Recommended RunPod Configuration
 
-### A. Recommended RunPod GPU
-*   **NVIDIA L40S (48GB VRAM)**: Best balance of availability, cost, and memory. Easily handles torch compiles and tracking memory buckets.
-*   **NVIDIA A100 SXM4 (80GB VRAM)**: Recommended for high-throughput batching, training, and multi-object tracking.
-*   **NVIDIA RTX 4090 (24GB VRAM)**: Smallest consumer GPU model recommended.
-*   *Note*: Ensure you select a **secure cloud** or **community cloud** instance with a CUDA-enabled base system.
-
-### B. Recommended Docker Image
-*   **Official PyTorch Dev Image**: Use the official PyTorch devel template on RunPod:
-    `pytorch/pytorch:2.5.1-cuda12.4-cudnn9-devel`
-    *(This image contains pre-installed CUDA compilers required for compiling Triton and optimized attention kernels).*
-
-### C. Recommended Disk Space
-*   **Container Disk**: 15 GB
-*   **Volume Disk**: 40 GB (required for storing large image frames, checkpoints, and output files).
+| Setting | Recommendation |
+|---|---|
+| **GPU** | NVIDIA L40S (48 GB) or A100 (80 GB) |
+| **Docker Image** | `pytorch/pytorch:2.5.1-cuda12.4-cudnn9-devel` |
+| **Container Disk** | 15 GB |
+| **Volume Disk** | 40 GB |
+| **Environment Variables** | None required |
 
 ---
 
-## 2. Environment Variables & Hugging Face Gated Access
+## 2. No Token Required
 
-Because Meta SAM 3 and SAM 3.1 model checkpoints are **gated** on Hugging Face, you must accept Meta's terms and authenticate:
+All model checkpoints download from **public URLs**:
 
-1.  Log in to your Hugging Face account.
-2.  Visit [huggingface.co/facebook/sam3](https://huggingface.co/facebook/sam3) and click **Accept Terms / Access Repository**.
-3.  Visit [huggingface.co/facebook/sam3.1](https://huggingface.co/facebook/sam3.1) and accept the terms there as well.
-4.  Generate a **Read Access Token** from your HF Settings -> Access Tokens page.
-5.  When launching your RunPod GPU instance, configure the following environment variable:
-    ```bash
-    export HF_TOKEN="your_hf_access_token_here"
-    ```
+| Checkpoint | Source |
+|---|---|
+| `sam2.1_hiera_large.pt` | `dl.fbaipublicfiles.com` (Meta CDN) |
+| `groundingdino_swinb_cogcoor.pth` | GitHub Releases (IDEA-Research) |
+
+No Hugging Face login. No Meta gating approval. No `HF_TOKEN`.
 
 ---
 
-## 3. Command Execution Sequence
-
-Once inside the RunPod terminal (accessible via SSH or the Jupyter web terminal):
+## 3. Exact Command Sequence
 
 ```bash
-# 1. Clone the project repository
-git clone https://github.com/your-org/adfusionR&D.git
-cd adfusionR&D
+# Clone repository
+git clone https://github.com/gunatarun007/adfusionR-D.git
+cd adfusionR-D
 
-# 2. Export Hugging Face token
-export HF_TOKEN="your_huggingface_read_token"
+# Make scripts executable
+chmod +x setup_runpod.sh scripts/run_validation.sh
 
-# 3. Mark scripts as executable
-chmod +x setup_runpod.sh
-chmod +x scripts/run_validation.sh
-
-# 4. Initialize and install system/python packages
+# Provision the environment
+# This installs system packages, SAM2, GroundingDINO, downloads checkpoints
 ./setup_runpod.sh
 
-# 5. Run the automated validation sequence
+# Run full automated validation
 ./scripts/run_validation.sh
+```
+
+Or run stages individually:
+```bash
+python main.py --stage detect   # GroundingDINO + SAM2 Image → cache/masks/
+python main.py --stage track    # SAM2 Video → cache/tracks/tracks.json
 ```
 
 ---
 
-## 4. Expected Outputs & Verification Checkpoints
+## 4. Expected Outputs
 
-Upon successful execution of `./scripts/run_validation.sh`, verify the following outputs:
+### Environment Check (`verify_env.py`)
+```
+[*] Python Version: 3.11.x ... OK
+[*] PyTorch Version: 2.5.1 ... OK
+[*] GPU: NVIDIA L40S (1 GPU(s))
+[*] VRAM: 48.00 GB
+[*] GroundingDINO package: importable ... OK
+[*] SAM2 package: importable ... OK
+[*] Checkpoint sam2.1_hiera_large.pt: 860 MB ... OK
+[*] Checkpoint groundingdino_swinb_cogcoor.pth: 340 MB ... OK
+[SUCCESS] Environment verification PASSED.
+```
 
-### A. Environment Check
-`verify_env.py` output should display `[SUCCESS] Environment verification PASSED` with active GPU configurations and Triton loaded.
+### Detection Stage
+- `cache/masks/mask_0001.png` → `mask_NNNN.png` — binary segmentation masks
+- `cache/debug/detect_0001.png` → `detect_NNNN.png` — green overlay debug frames
 
-### B. Checkpoint Downloads
-The directory `models/` must contain:
-*   `sam3.pt` (3.45 GB)
-*   `sam3.1_multiplex.pt` (3.50 GB)
-
-### C. Detection Stage Output
-Running `python main.py --stage detect` should output:
-*   `cache/masks/mask_0001.png` to `mask_0150.png` (8-bit binary masks showing target segments).
-*   Green overlay images in `cache/debug/detect_0001.png` to `detect_0150.png`.
-
-### D. Tracking Stage Output
-Running `python main.py --stage track` should output:
-*   `cache/tracks/tracks.json` containing object tracking trajectories.
-*   Updated binary masks in `cache/masks/`.
-*   Blue-ish boundary tracking overlays in `cache/debug/track_0001.png` to `track_0150.png`.
+### Tracking Stage
+- `cache/tracks/tracks.json` — object trajectory data per frame
+- `cache/debug/track_0001.png` → `track_NNNN.png` — blue overlay debug frames
 
 ---
 
-## 5. Common Failure Cases & Recovery Steps
+## 5. Common Failure Cases
 
-### A. Error: `ModuleNotFoundError: No module named 'triton'`
-*   **Cause**: Running on Windows or an incompatible Linux setup without CUDA developer tools.
-*   **Recovery**: Verify that you are running inside a Linux Docker container built from the PyTorch devel template. If needed, reinstall `triton` manually using `pip install triton --break-system-packages`.
+### `ImportError: No module named 'groundingdino'`
+GroundingDINO was not installed. Run:
+```bash
+pip install -e third_party/GroundingDINO
+```
+Ensure `CUDA_HOME` is set: `export CUDA_HOME=/usr/local/cuda`
 
-### B. Error: `GatedRepoError` or `401 Unauthorized` during model download
-*   **Cause**: Gated terms not accepted on Hugging Face, or `HF_TOKEN` was omitted or invalid.
-*   **Recovery**: Visit the Hugging Face links above, click accept, and verify that `export HF_TOKEN="your_token"` is executed in the active terminal session. Run `python utils/download_models.py` again to check.
+### `ImportError: No module named 'sam2'`
+SAM2 was not installed. Run:
+```bash
+pip install -e third_party/sam2
+```
 
-### C. Error: `CUDA Out Of Memory` (OOM) during video tracking
-*   **Cause**: High batch sizes or large inputs on small VRAM GPUs.
-*   **Recovery**: By default, SAM 3.1 Multiplexing operates inside a 4.8 GB VRAM envelope. If an OOM occurs, ensure no other processes are consuming VRAM (run `nvidia-smi` to audit active processes) or reduce `max_num_objects` in `config.yaml`.
+### `FileNotFoundError: models/sam2.1_hiera_large.pt`
+Checkpoint missing. Run:
+```bash
+python utils/download_models.py
+```
+
+### `CUDA Out of Memory`
+Reduce the video resolution in `adfusion/config/config.yaml` or switch to a GPU with more VRAM (L40S recommended).
+
+### GroundingDINO CUDA compilation fails
+```bash
+export CUDA_HOME=/usr/local/cuda
+export FORCE_CUDA=1
+pip install -e third_party/GroundingDINO
+```

@@ -1,263 +1,263 @@
 import json
+import shutil
+import tempfile
 import time
 import cv2
 import numpy as np
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List
 from adfusion.pipeline.base import BaseStage, PipelineContext, StageResult
+
 
 class VideoTrackingStage(BaseStage):
     """Stage 3: Video Tracking.
-    
-    Loads detection outputs and associates bounding boxes across frames using
-    an Intersection-over-Union (IoU) tracker. Outputs tracks.json documenting
-    object trajectories and saves tracking debug visualizations.
+
+    Uses the Meta SAM2 VideoPredictor to propagate segmentation masks across all
+    frames. The first-frame bounding box comes from the upstream detection stage.
+
+    SAM2 VideoPredictor requires JPEG frames in a flat directory named as
+    zero-padded integers (e.g. 00000.jpg, 00001.jpg …). This stage creates a
+    temporary directory, writes JPEG copies of the PNG frames, runs the predictor,
+    then cleans up. No modifications to upstream stages are required.
+
+    Outputs:
+        cache/masks/mask_XXXX.png   — refined per-frame binary masks
+        cache/tracks/tracks.json    — object trajectory data
+        cache/debug/track_XXXX.png  — blue overlay visualisations
     """
 
     def __init__(self) -> None:
         super().__init__("track_objects")
 
-    def _get_iou(self, box1: List[float], box2: List[float]) -> float:
-        """Calculates Intersection over Union (IoU) of two bounding boxes in [x1, y1, x2, y2] format."""
-        x1_1, y1_1, x2_1, y2_1 = box1
-        x1_2, y1_2, x2_2, y2_2 = box2
-
-        # Check for intersection
-        xi1 = max(x1_1, x1_2)
-        yi1 = max(y1_1, y1_2)
-        xi2 = min(x2_1, x2_2)
-        yi2 = min(y2_1, y2_2)
-
-        if xi2 <= xi1 or yi2 <= yi1:
-            return 0.0
-
-        inter_area = (xi2 - xi1) * (yi2 - yi1)
-        area1 = (x2_1 - x1_1) * (y2_1 - y1_1)
-        area2 = (x2_2 - x1_2) * (y2_2 - y1_2)
-        union_area = area1 + area2 - inter_area
-
-        if union_area <= 0:
-            return 0.0
-
-        return inter_area / union_area
+    # ------------------------------------------------------------------
+    # Stage interface
+    # ------------------------------------------------------------------
 
     def run(self, context: PipelineContext) -> StageResult:
         start_time = time.perf_counter()
-        context.logger.info("=== Starting Real Object Tracking (Official SAM 3 Predictor) ===")
+        context.logger.info("=== Starting SAM2 Video Tracking ===")
 
-        # Retrieve configurations
-        sam3_config = context.config.get("sam3", {})
-        checkpoint_rel = sam3_config.get("checkpoint_multiplex", "models/sam3.1_multiplex.pt")
-        checkpoint_path = context.workspace_dir / checkpoint_rel
-        device_config = sam3_config.get("device", "cuda")
-        conf_threshold = float(sam3_config.get("confidence_threshold", 0.25))
+        # ── Configuration ──────────────────────────────────────────────
+        det_cfg     = context.config.get("detection", {})
+        sam2_ckpt_rel = det_cfg.get("sam2_checkpoint", "models/sam2.1_hiera_large.pt")
+        sam2_cfg_name = det_cfg.get("sam2_config",     "configs/sam2.1/sam2.1_hiera_l.yaml")
+        device_cfg    = det_cfg.get("device", "cuda")
 
-        # Retrieve detection outputs
-        detection_res = context.stage_outputs.get("object_detection", {})
-        detection_metadata = detection_res.get("metadata", {})
-        label = detection_metadata.get("target_class", "cup")
+        sam2_ckpt = context.workspace_dir / sam2_ckpt_rel
 
-        # Paths
+        # ── Device ─────────────────────────────────────────────────────
+        import torch
+        device = "cpu"
+        if device_cfg == "cuda" and torch.cuda.is_available():
+            device = "cuda"
+        else:
+            if device_cfg == "cuda":
+                context.logger.warning("CUDA not available; falling back to CPU.")
+
+        # ── Validate checkpoint ─────────────────────────────────────────
+        if not sam2_ckpt.exists():
+            return StageResult(
+                stage_name=self.name, success=False,
+                runtime_seconds=time.perf_counter() - start_time,
+                error_message=f"SAM2 checkpoint not found at {sam2_ckpt}. "
+                              f"Run: python utils/download_models.py"
+            )
+
+        # ── Retrieve upstream outputs ───────────────────────────────────
+        detection_meta = (context.stage_outputs
+                          .get("object_detection", {})
+                          .get("metadata", {}))
+        label        = detection_meta.get("target_class", "person")
+        masks_meta   = detection_meta.get("masks_metadata", [])
+
+        extraction_meta = (context.stage_outputs
+                           .get("frame_extraction", {})
+                           .get("metadata", {}))
+        video_fps = extraction_meta.get("fps",    30.0)
+        width     = extraction_meta.get("width",  1280)
+        height    = extraction_meta.get("height", 720)
+
+        # ── Paths ───────────────────────────────────────────────────────
         frames_dir = context.cache_dir / "frames"
-        masks_dir = context.cache_dir / "masks"
+        masks_dir  = context.cache_dir / "masks"
         tracks_dir = context.cache_dir / "tracks"
-        debug_dir = context.cache_dir / "debug"
+        debug_dir  = context.cache_dir / "debug"
 
         tracks_dir.mkdir(parents=True, exist_ok=True)
         debug_dir.mkdir(parents=True, exist_ok=True)
 
-        frame_files = sorted(list(frames_dir.glob("frame_*.png")))
+        frame_files = sorted(frames_dir.glob("frame_*.png"))
         if not frame_files:
             return StageResult(
-                stage_name=self.name,
-                success=False,
+                stage_name=self.name, success=False,
                 runtime_seconds=time.perf_counter() - start_time,
-                error_message="Frames directory is empty. Run frame extraction first."
+                error_message="No frames found. Run frame extraction first."
             )
 
-        # Retrieve video metadata
-        extraction_res = context.stage_outputs.get("frame_extraction", {})
-        extraction_metadata = extraction_res.get("metadata", {})
-        fps = extraction_metadata.get("fps", 30.0)
-        width = extraction_metadata.get("width", 1280)
-        height = extraction_metadata.get("height", 720)
+        # ── Find the first detected bounding box ────────────────────────
+        first_box = None
+        first_box_frame_idx = 0
+        for fm in masks_meta:
+            if fm.get("detected") and fm.get("bbox") and fm["bbox"] != [0, 0, 0, 0]:
+                first_box = fm["bbox"]          # [x1, y1, x2, y2] absolute pixels
+                first_box_frame_idx = fm["frame_idx"]
+                break
 
-        # Load SAM 3 Video Predictor using official API
-        context.logger.info("Initializing Meta SAM 3 Video Predictor...")
+        if first_box is None:
+            context.logger.warning(
+                "No detected object found in detection stage. "
+                "Falling back to centre-region box for tracking initialisation."
+            )
+            cx, cy = width // 2, height // 2
+            bw, bh = width // 4, height // 4
+            first_box = [cx - bw // 2, cy - bh // 2,
+                         cx + bw // 2, cy + bh // 2]
+
+        context.logger.info(
+            f"Initialising SAM2 tracker from frame {first_box_frame_idx} "
+            f"box {[round(v, 1) for v in first_box]}"
+        )
+
+        # ── Build a temporary JPEG frame directory for SAM2 ─────────────
+        # SAM2 VideoPredictor.init_state() requires files named
+        # 00000.jpg, 00001.jpg, … (zero-padded, zero-indexed integers)
+        tmp_dir = Path(tempfile.mkdtemp(prefix="adfusion_sam2_frames_"))
         try:
-            import torch
-            from sam3.model_builder import build_sam3_predictor
+            context.logger.info(f"Writing JPEG frames to temp dir: {tmp_dir}")
+            for i, fp in enumerate(frame_files):
+                bgr = cv2.imread(str(fp))
+                if bgr is None:
+                    bgr = np.zeros((height, width, 3), dtype=np.uint8)
+                jpeg_path = tmp_dir / f"{i:05d}.jpg"
+                cv2.imwrite(str(jpeg_path), bgr, [cv2.IMWRITE_JPEG_QUALITY, 95])
 
-            # Determine device
-            device = "cpu"
-            if device_config == "cuda" and torch.cuda.is_available():
-                device = "cuda"
+            # ── Load SAM2 VideoPredictor ────────────────────────────────
+            context.logger.info("Loading SAM2 VideoPredictor…")
+            from sam2.build_sam import build_sam2_video_predictor
+            predictor = build_sam2_video_predictor(sam2_cfg_name, str(sam2_ckpt),
+                                                   device=device)
 
-            predictor = build_sam3_predictor(
-                checkpoint_path=str(checkpoint_path),
-                version="sam3.1",
-                compile=False
-            )
-            context.logger.info("SAM 3 Video Predictor loaded successfully.")
-        except Exception as e:
-            return StageResult(
-                stage_name=self.name,
-                success=False,
-                runtime_seconds=time.perf_counter() - start_time,
-                error_message=f"Failed to load SAM 3 Video Predictor: {e}"
-            )
+            tracks_data: Dict[str, Any] = {
+                "track_id": 1,
+                "label":    label,
+                "frames":   [],
+            }
 
-        # Run Video Session Tracking
-        tracks_data = {
-            "track_id": 1,
-            "label": label,
-            "frames": []
-        }
+            with torch.inference_mode():
+                # init_state accepts a directory of JPEG frames
+                state = predictor.init_state(video_path=str(tmp_dir))
 
-        session_id = None
-        try:
-            # 1. Start Session
-            session_resp = predictor.handle_request({
-                "type": "start_session",
-                "resource_path": str(frames_dir)
-            })
-            session_id = session_resp["session_id"]
-            context.logger.info(f"Initialized SAM 3 tracking session: {session_id}")
+                # Register the first-frame box prompt for object ID 1
+                box_np = np.array(first_box, dtype=np.float32)
+                predictor.add_new_points_or_box(
+                    state,
+                    frame_idx=first_box_frame_idx,
+                    obj_id=1,
+                    box=box_np,
+                )
 
-            # 2. Add Prompt (register text query at frame 0 with object ID 1)
-            predictor.handle_request({
-                "type": "add_prompt",
-                "session_id": session_id,
-                "frame_index": 0,
-                "text": label,
-                "obj_id": 1,
-                "output_prob_thresh": conf_threshold
-            })
+                context.logger.info("Propagating masks through video…")
 
-            # 3. Propagate in video forward
-            stream = predictor.handle_stream_request({
-                "type": "propagate_in_video",
-                "session_id": session_id,
-                "propagation_direction": "forward"
-            })
+                for frame_idx, obj_ids, mask_logits in predictor.propagate_in_video(state):
+                    # mask_logits: Tensor (N, 1, H, W) — one channel per object
+                    target_pos = (obj_ids.index(1)
+                                  if isinstance(obj_ids, list) and 1 in obj_ids
+                                  else (0 if len(obj_ids) > 0 else None))
 
-            # 4. Process streaming frames output
-            for frame_data in stream:
-                frame_idx = frame_data["frame_index"]
-                outputs = frame_data["outputs"]
+                    if target_pos is not None:
+                        mask_bool = (mask_logits[target_pos, 0] > 0).cpu().numpy()
+                        mask = mask_bool.astype(np.uint8) * 255
+                        if mask.shape != (height, width):
+                            mask = cv2.resize(mask, (width, height),
+                                              interpolation=cv2.INTER_NEAREST)
 
-                obj_ids = outputs["out_obj_ids"]
-                probs = outputs["out_probs"]
-                boxes_xywh = outputs["out_boxes_xywh"]
-                binary_masks = outputs["out_binary_masks"]
+                        # Derive bounding box from mask pixels
+                        ys, xs = np.where(mask > 0)
+                        if len(xs):
+                            x1, x2 = int(xs.min()), int(xs.max())
+                            y1, y2 = int(ys.min()), int(ys.max())
+                            bw = float(x2 - x1)
+                            bh = float(y2 - y1)
+                            bbox_xywh = [float(x1), float(y1), bw, bh]
+                            cx = int(x1 + bw / 2)
+                            cy = int(y1 + bh / 2)
+                        else:
+                            bbox_xywh = [0.0, 0.0, 0.0, 0.0]
+                            cx, cy = width // 2, height // 2
 
-                # Check if target object_id=1 is present in the frame tracking output
-                target_idx = -1
-                if obj_ids is not None:
-                    obj_ids_list = obj_ids.tolist() if hasattr(obj_ids, "tolist") else list(obj_ids)
-                    if 1 in obj_ids_list:
-                        target_idx = obj_ids_list.index(1)
-
-                if target_idx != -1:
-                    # Retrieve the binary mask array
-                    mask_bool = binary_masks[target_idx]
-                    mask = (mask_bool * 255).astype(np.uint8)
-
-                    # Bounding Box (SAM 3 returns normalized center-x, center_y, width, height)
-                    cx_norm, cy_norm, w_norm, h_norm = boxes_xywh[target_idx]
-                    w = float(w_norm * width)
-                    h = float(h_norm * height)
-                    x_min = float((cx_norm - w_norm / 2.0) * width)
-                    y_min = float((cy_norm - h_norm / 2.0) * height)
-                    bbox_xywh = [x_min, y_min, w, h]
-
-                    # Extract polygon contours
-                    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    polygon = []
-                    if contours:
-                        largest_contour = max(contours, key=cv2.contourArea)
-                        polygon = largest_contour.reshape(-1, 2).tolist()
-
-                    confidence = float(probs[target_idx])
-                    cx = int(x_min + w / 2)
-                    cy = int(y_min + h / 2)
-                    detected = True
-                else:
-                    # Lost track / Occluded: write a blank placeholder mask
-                    mask = np.zeros((height, width), dtype=np.uint8)
-                    bbox_xywh = [0.0, 0.0, 0.0, 0.0]
-                    polygon = []
-                    confidence = 0.0
-                    cx, cy = int(width / 2), int(height / 2)
-                    detected = False
-
-                # Overwrite binary mask file in cache/masks
-                mask_filename = f"mask_{frame_idx + 1:04d}.png"
-                mask_path = masks_dir / mask_filename
-                cv2.imwrite(str(mask_path), mask)
-
-                # Save frame tracks metadata
-                tracks_data["frames"].append({
-                    "object_id": 1,
-                    "frame_idx": frame_idx,
-                    "center": [cx, cy],
-                    "bbox": bbox_xywh,
-                    "polygon": polygon,
-                    "confidence": confidence,
-                    "timestamp": frame_idx / fps if fps > 0 else 0.0
-                })
-
-                # Create visual debug overlay representing tracking (Blue-ish color)
-                frame_file = frames_dir / f"frame_{frame_idx + 1:04d}.png"
-                frame = cv2.imread(str(frame_file))
-                if frame is not None:
-                    if detected:
-                        color_mask = np.zeros_like(frame)
-                        color_mask[mask > 0] = [235, 140, 50] # Blue-ish mask overlay (BGR: [235, 140, 50])
-                        cv2.addWeighted(frame, 1.0, color_mask, 0.4, 0, frame)
-                        
-                        # Draw bounding box
-                        cv2.rectangle(
-                            frame,
-                            (int(x_min), int(y_min)),
-                            (int(x_min + w), int(y_min + h)),
-                            (235, 140, 50), 2
+                        contours, _ = cv2.findContours(
+                            mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
                         )
-                        
-                        # Draw label
-                        label_str = f"TRACK ID: 1 - {label} ({confidence:.2f})"
-                        cv2.putText(
-                            frame, label_str, (int(x_min), int(y_min) - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (235, 140, 50), 2
+                        polygon = (max(contours, key=cv2.contourArea)
+                                   .reshape(-1, 2).tolist() if contours else [])
+                        # Confidence from logit magnitude (proxy)
+                        confidence = float(
+                            torch.sigmoid(mask_logits[target_pos, 0]).mean().item()
                         )
-                    
-                    # Write debug image
-                    cv2.imwrite(str(debug_dir / f"track_{frame_idx + 1:04d}.png"), frame)
+                        detected = True
+                    else:
+                        mask = np.zeros((height, width), dtype=np.uint8)
+                        bbox_xywh = [0.0, 0.0, 0.0, 0.0]
+                        polygon, confidence = [], 0.0
+                        cx, cy = width // 2, height // 2
+                        detected = False
 
-                # Log progress
-                if (frame_idx + 1) % 30 == 0 or (frame_idx + 1) == len(frame_files):
-                    context.logger.info(f"Propagated frame {frame_idx + 1}/{len(frame_files)}")
+                    # Overwrite mask file in cache/masks/
+                    mask_path = masks_dir / f"mask_{frame_idx + 1:04d}.png"
+                    cv2.imwrite(str(mask_path), mask)
+
+                    tracks_data["frames"].append({
+                        "object_id": 1,
+                        "frame_idx": frame_idx,
+                        "center":    [cx, cy],
+                        "bbox":      bbox_xywh,
+                        "polygon":   polygon,
+                        "confidence": confidence,
+                        "timestamp": frame_idx / video_fps if video_fps > 0 else 0.0,
+                        "detected":  detected,
+                    })
+
+                    # Debug overlay (blue-ish)
+                    orig_file = frames_dir / f"frame_{frame_idx + 1:04d}.png"
+                    frame_bgr = cv2.imread(str(orig_file))
+                    if frame_bgr is not None:
+                        if detected:
+                            colour_mask = np.zeros_like(frame_bgr)
+                            colour_mask[mask > 0] = [235, 140, 50]
+                            cv2.addWeighted(frame_bgr, 1.0, colour_mask, 0.4, 0, frame_bgr)
+                            x1_d = int(bbox_xywh[0])
+                            y1_d = int(bbox_xywh[1])
+                            x2_d = int(x1_d + bbox_xywh[2])
+                            y2_d = int(y1_d + bbox_xywh[3])
+                            cv2.rectangle(frame_bgr, (x1_d, y1_d), (x2_d, y2_d), (235, 140, 50), 2)
+                            cv2.putText(
+                                frame_bgr,
+                                f"TRACK ID: 1 - {label} ({confidence:.2f})",
+                                (x1_d, max(y1_d - 10, 10)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (235, 140, 50), 2,
+                            )
+                        cv2.imwrite(str(debug_dir / f"track_{frame_idx + 1:04d}.png"), frame_bgr)
+
+                    if (frame_idx + 1) % 30 == 0 or (frame_idx + 1) == len(frame_files):
+                        context.logger.info(
+                            f"Propagated frame {frame_idx + 1}/{len(frame_files)}"
+                        )
 
         finally:
-            # 5. Clean up and close the tracking session
-            if session_id is not None:
-                try:
-                    predictor.handle_request({
-                        "type": "close_session",
-                        "session_id": session_id
-                    })
-                    context.logger.info(f"Closed SAM 3 session {session_id} successfully.")
-                except Exception as ce:
-                    context.logger.warning(f"Error while closing session: {ce}")
+            # Always clean up temp JPEG directory
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
-        # Save compiled results to tracks.json
+        # ── Save tracks.json ───────────────────────────────────────────
         tracks_file = tracks_dir / "tracks.json"
         with open(tracks_file, "w", encoding="utf-8") as f:
             json.dump(tracks_data, f, indent=4)
 
-        runtime = time.perf_counter() - start_time
+        runtime  = time.perf_counter() - start_time
         fps_rate = len(frame_files) / runtime if runtime > 0 else 0.0
-        context.logger.info(f"SAM 3 Tracking stage completed in {runtime:.2f}s ({fps_rate:.2f} FPS).")
+        context.logger.info(
+            f"SAM2 Tracking complete. Frames: {len(frame_files)} | "
+            f"FPS: {fps_rate:.2f} | Runtime: {runtime:.2f}s"
+        )
 
         return StageResult(
             stage_name=self.name,
@@ -265,22 +265,19 @@ class VideoTrackingStage(BaseStage):
             runtime_seconds=runtime,
             output_files=[tracks_file],
             metadata={
-                "tracks": tracks_data,
+                "tracks":              tracks_data,
                 "num_tracked_objects": 1,
-                "average_fps": fps_rate
-            }
+                "average_fps":         fps_rate,
+            },
         )
 
     def is_cached(self, context: PipelineContext) -> bool:
-        tracks_dir = context.cache_dir / "tracks"
-        tracks_file = tracks_dir / "tracks.json"
-        
+        tracks_file = context.cache_dir / "tracks" / "tracks.json"
         if not tracks_file.exists():
             return False
-            
         try:
             with open(tracks_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                return "track_id" in data and len(data.get("frames", [])) > 0
+            return "track_id" in data and len(data.get("frames", [])) > 0
         except Exception:
             return False

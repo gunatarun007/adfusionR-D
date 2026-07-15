@@ -3,16 +3,19 @@ opencv-python>=4.8.0.0
 pyyaml>=6.0.1
 numpy>=1.26.0,<2.0.0
 tqdm>=4.66.0
+Pillow>=10.0.0
 
-# SAM 3 Dependency Stack
-timm>=1.0.17
-ftfy==6.1.1
-regex
-iopath>=0.1.10
-typing_extensions
-huggingface_hub
-einops
-ninja
+# GroundingDINO dependencies (installed via third_party/GroundingDINO)
+# groundingdino itself is installed in editable mode from third_party/GroundingDINO
+transformers>=4.38.0
+addict
+yapf
+timm>=1.0.3
+supervision>=0.19.0
+
+# SAM2 dependencies (installed via third_party/sam2)
+# sam2 itself is installed in editable mode from third_party/sam2
+# SAM2 also needs torchvision which comes with the PyTorch container
 
 # System / Diagnostics Utilities
 psutil>=5.9.0

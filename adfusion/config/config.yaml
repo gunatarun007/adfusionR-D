@@ -21,7 +21,8 @@ stages:
     enabled: true
   object_detection:
     enabled: true
-    target_class: "cup"
+    # Text prompt sent to GroundingDINO for zero-shot detection
+    target_class: "person"
   track_objects:
     enabled: true
   estimate_depth:
@@ -41,8 +42,16 @@ stages:
   export_video:
     enabled: true
 
-sam3:
-  checkpoint: "models/sam3.pt"
-  model_size: "base"
+# Detection backend: GroundingDINO + SAM2 (fully open-source, no HF token required)
+detection:
+  # GroundingDINO SwinB checkpoint (public GitHub release download)
+  gdino_checkpoint: "models/groundingdino_swinb_cogcoor.pth"
+  # SAM2.1 Hiera-Large checkpoint (public Meta CDN download)
+  sam2_checkpoint: "models/sam2.1_hiera_large.pt"
+  # SAM2 config identifier (relative to third_party/sam2/)
+  sam2_config: "configs/sam2.1/sam2.1_hiera_l.yaml"
+  # GroundingDINO detection thresholds
+  box_threshold: 0.35
+  text_threshold: 0.25
+  # Compute device: "cuda" (recommended on RunPod) or "cpu"
   device: "cuda"
-  confidence_threshold: 0.25
