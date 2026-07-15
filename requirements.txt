@@ -5,18 +5,22 @@ numpy>=1.26.0,<2.0.0
 tqdm>=4.66.0
 Pillow>=10.0.0
 
-# GroundingDINO dependencies (installed via third_party/GroundingDINO)
-# groundingdino itself is installed in editable mode from third_party/GroundingDINO
+# Explicit PyTorch + Torchvision + Torchaudio CUDA 12.4 Pinning
+torch==2.4.1
+torchvision==0.19.1
+torchaudio==2.4.1
+
+# GroundingDINO dependencies
 transformers>=4.38.0
 addict
 yapf
 timm>=1.0.3
 supervision>=0.19.0
+pycocotools
 
-# SAM2 dependencies (installed via third_party/sam2)
-# sam2 itself is installed in editable mode from third_party/sam2
-torch
-torchvision
+# SAM2 dependencies
+hydra-core>=1.3.2
+iopath>=0.1.10
 
 # System / Diagnostics Utilities
 psutil>=5.9.0

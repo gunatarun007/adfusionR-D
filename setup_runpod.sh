@@ -49,36 +49,39 @@ mkdir -p third_party/depth_anything3
 mkdir -p third_party/sam3d
 mkdir -p third_party/wan22_vace
 
-# 5. Core python dependencies
+# 5. Explicitly install PyTorch 2.4.1 + CUDA 12.4 first
+echo "[*] Installing PyTorch + CUDA 12.4 explicitly..."
 if command -v uv &> /dev/null; then
+    uv pip install --system --no-cache-dir torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu124
     echo "[*] Installing requirements via uv..."
     uv pip install --system --no-cache-dir -r requirements.txt
 else
+    pip install --no-cache-dir torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu124 --break-system-packages || \
+        pip install --no-cache-dir torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu124
     echo "[*] Installing requirements via pip..."
-    pip install --no-cache-dir -r requirements.txt \
-        --break-system-packages || \
+    pip install --no-cache-dir -r requirements.txt --break-system-packages || \
         pip install --no-cache-dir -r requirements.txt
 fi
 
-# 6. Install third_party/sam2 in editable mode
+# 6. Install third_party/sam2 in editable mode (no-deps and no-build-isolation)
 echo "[*] Installing SAM2 from third_party/sam2..."
 if command -v uv &> /dev/null; then
-    uv pip install --system --no-build-isolation --no-cache-dir -e third_party/sam2
+    uv pip install --system --no-build-isolation --no-deps --no-cache-dir -e third_party/sam2
 else
-    pip install --no-build-isolation --no-cache-dir -e third_party/sam2 \
+    pip install --no-build-isolation --no-deps --no-cache-dir -e third_party/sam2 \
         --break-system-packages || \
-        pip install --no-build-isolation --no-cache-dir -e third_party/sam2
+        pip install --no-build-isolation --no-deps --no-cache-dir -e third_party/sam2
 fi
 
-# 7. Install third_party/GroundingDINO in editable mode
+# 7. Install third_party/GroundingDINO in editable mode (no-deps and no-build-isolation)
 # Requires CUDA_HOME set correctly to compile custom CUDA extensions
 echo "[*] Installing GroundingDINO from third_party/GroundingDINO..."
 if command -v uv &> /dev/null; then
-    uv pip install --system --no-build-isolation --no-cache-dir -e third_party/GroundingDINO
+    uv pip install --system --no-build-isolation --no-deps --no-cache-dir -e third_party/GroundingDINO
 else
-    pip install --no-build-isolation --no-cache-dir -e third_party/GroundingDINO \
+    pip install --no-build-isolation --no-deps --no-cache-dir -e third_party/GroundingDINO \
         --break-system-packages || \
-        pip install --no-build-isolation --no-cache-dir -e third_party/GroundingDINO
+        pip install --no-build-isolation --no-deps --no-cache-dir -e third_party/GroundingDINO
 fi
 
 # 8. Download model checkpoints (public URLs, no token needed)

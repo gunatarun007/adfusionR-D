@@ -31,6 +31,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Upgrade pip and install uv
 RUN pip install --no-cache-dir --upgrade pip uv
 
+# Install PyTorch + CUDA 12.4 explicitly first
+RUN uv pip install --no-cache-dir --system torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu124
+
 # Install core Python dependencies first (cacheable layer)
 COPY pyproject.toml requirements.txt ./
 RUN uv pip install --no-cache-dir --system -r requirements.txt
@@ -38,11 +41,11 @@ RUN uv pip install --no-cache-dir --system -r requirements.txt
 # Copy full project (including third_party/)
 COPY . .
 
-# Install SAM2 from third_party in editable mode
-RUN uv pip install --no-build-isolation --no-cache-dir --system -e third_party/sam2
+# Install SAM2 from third_party in editable mode (no-deps and no-build-isolation)
+RUN uv pip install --no-build-isolation --no-deps --no-cache-dir --system -e third_party/sam2
 
-# Install GroundingDINO from third_party in editable mode (compiles CUDA ops)
-RUN uv pip install --no-build-isolation --no-cache-dir --system -e third_party/GroundingDINO
+# Install GroundingDINO from third_party in editable mode (no-deps and no-build-isolation, compiles CUDA ops)
+RUN uv pip install --no-build-isolation --no-deps --no-cache-dir --system -e third_party/GroundingDINO
 
 # Expose Jupyter and SSH ports
 EXPOSE 8888 22
