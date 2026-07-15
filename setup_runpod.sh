@@ -63,22 +63,22 @@ fi
 # 6. Install third_party/sam2 in editable mode
 echo "[*] Installing SAM2 from third_party/sam2..."
 if command -v uv &> /dev/null; then
-    uv pip install --system --no-cache-dir -e third_party/sam2
+    uv pip install --system --no-build-isolation --no-cache-dir -e third_party/sam2
 else
-    pip install --no-cache-dir -e third_party/sam2 \
+    pip install --no-build-isolation --no-cache-dir -e third_party/sam2 \
         --break-system-packages || \
-        pip install --no-cache-dir -e third_party/sam2
+        pip install --no-build-isolation --no-cache-dir -e third_party/sam2
 fi
 
 # 7. Install third_party/GroundingDINO in editable mode
 # Requires CUDA_HOME set correctly to compile custom CUDA extensions
 echo "[*] Installing GroundingDINO from third_party/GroundingDINO..."
 if command -v uv &> /dev/null; then
-    uv pip install --system --no-cache-dir -e third_party/GroundingDINO
+    uv pip install --system --no-build-isolation --no-cache-dir -e third_party/GroundingDINO
 else
-    pip install --no-cache-dir -e third_party/GroundingDINO \
+    pip install --no-build-isolation --no-cache-dir -e third_party/GroundingDINO \
         --break-system-packages || \
-        pip install --no-cache-dir -e third_party/GroundingDINO
+        pip install --no-build-isolation --no-cache-dir -e third_party/GroundingDINO
 fi
 
 # 8. Download model checkpoints (public URLs, no token needed)

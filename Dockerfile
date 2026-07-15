@@ -39,10 +39,10 @@ RUN uv pip install --no-cache-dir --system -r requirements.txt
 COPY . .
 
 # Install SAM2 from third_party in editable mode
-RUN uv pip install --no-cache-dir --system -e third_party/sam2
+RUN uv pip install --no-build-isolation --no-cache-dir --system -e third_party/sam2
 
 # Install GroundingDINO from third_party in editable mode (compiles CUDA ops)
-RUN uv pip install --no-cache-dir --system -e third_party/GroundingDINO
+RUN uv pip install --no-build-isolation --no-cache-dir --system -e third_party/GroundingDINO
 
 # Expose Jupyter and SSH ports
 EXPOSE 8888 22

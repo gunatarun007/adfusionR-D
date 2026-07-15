@@ -15,7 +15,8 @@ supervision>=0.19.0
 
 # SAM2 dependencies (installed via third_party/sam2)
 # sam2 itself is installed in editable mode from third_party/sam2
-# SAM2 also needs torchvision which comes with the PyTorch container
+torch
+torchvision
 
 # System / Diagnostics Utilities
 psutil>=5.9.0
