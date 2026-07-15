@@ -77,7 +77,13 @@ def main():
     # 4. SAM2 package check
     try:
         import sam2  # noqa: F401
-        print("[*] SAM2 package: importable ... OK")
+        sam2_pkg_dir = os.path.dirname(sam2.__file__)
+        cfg_path = os.path.join(sam2_pkg_dir, "configs", "sam2.1", "sam2.1_hiera_l.yaml")
+        if os.path.exists(cfg_path):
+            print("[*] SAM2 package: importable, config yaml found ... OK")
+        else:
+            print("[WARNING] SAM2 package: importable but config yaml not found at expected path.")
+            warnings.append(f"SAM2 config yaml missing: {cfg_path}")
     except ImportError:
         print("[ERROR] sam2 package NOT importable. "
               "Run: pip install -e third_party/sam2")
