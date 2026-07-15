@@ -83,9 +83,19 @@ class BrandRenderingStage(BaseStage):
                 bbox = track_info["bbox"] # [x, y, w, h]
                 w, h = bbox[2], bbox[3]
 
+                # Convert to native Python integers
+                w = int(round(float(w)))
+                h = int(round(float(h)))
+
                 # Ensure dimensions are positive and non-zero
                 w = max(20, w)
                 h = max(20, h)
+
+                context.logger.info(f"Rendering logo at frame {idx}: w={w} (type={type(w)}), h={h} (type={type(h)})")
+
+                # Verify logo is a valid numpy ndarray
+                if not isinstance(logo, np.ndarray):
+                    raise TypeError(f"Brand asset 'logo' must be a numpy ndarray, got {type(logo)}")
 
                 # Resize the logo to fit the bounding box
                 resized_logo = cv2.resize(logo, (w, h), interpolation=cv2.INTER_AREA)
