@@ -9,15 +9,15 @@ __pycache__/
 *.pyd
 
 # Local development caches & metrics
-cache/
-logs/
+/cache/
+/logs/
 *.log
-experiments/
-output/
-input/demo.mp4
+/experiments/
+/output/
+/input/demo.mp4
 
 # Heavy weight checkpoints & downloads
-models/
+/models/
 *.pt
 *.pth
 *.bin
