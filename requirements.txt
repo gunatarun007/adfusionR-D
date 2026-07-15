@@ -11,7 +11,7 @@ torchvision==0.19.1
 torchaudio==2.4.1
 
 # GroundingDINO dependencies
-transformers>=4.38.0
+transformers==4.40.2
 addict
 yapf
 timm>=1.0.3

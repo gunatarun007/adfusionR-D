@@ -26,7 +26,17 @@ class BertModelWarper(nn.Module):
 
         self.get_extended_attention_mask = bert_model.get_extended_attention_mask
         self.invert_attention_mask = bert_model.invert_attention_mask
-        self.get_head_mask = bert_model.get_head_mask
+        if hasattr(bert_model, "get_head_mask"):
+            self.get_head_mask = bert_model.get_head_mask
+        elif hasattr(bert_model, "_get_head_mask"):
+            self.get_head_mask = bert_model._get_head_mask
+        else:
+            # Fallback for newer transformers versions where get_head_mask is removed/private
+            def get_head_mask_fallback(head_mask, num_hidden_layers, is_attention_chunked=False):
+                if head_mask is None:
+                    return [None] * num_hidden_layers
+                return [None] * num_hidden_layers
+            self.get_head_mask = get_head_mask_fallback
 
     def forward(
         self,
