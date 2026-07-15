@@ -1,0 +1,48 @@
+pipeline:
+  # Path to the input video file
+  video_path: "input/demo.mp4"
+  # Path to the output video file
+  output_path: "output/final.mp4"
+  # Directory where intermediate results are stored
+  cache_dir: "cache"
+  # Directory where experiment logs, timings, and metadata are saved
+  experiments_dir: "experiments"
+  # Hardware device to use: "cpu", "cuda", or "mps"
+  device: "cpu"
+  # Batch size for stage processing
+  batch_size: 4
+  # Target frame rate for video processing
+  frame_rate: 30
+  # Target resolution [width, height] for the output video
+  resolution: [1280, 720]
+
+stages:
+  frame_extraction:
+    enabled: true
+  object_detection:
+    enabled: true
+    target_class: "cup"
+  track_objects:
+    enabled: true
+  estimate_depth:
+    enabled: true
+  reconstruct_object:
+    enabled: true
+  remove_object:
+    enabled: true
+  render_brand:
+    enabled: true
+    # Path to the brand visual asset (e.g. logo or overlay)
+    brand_logo_path: "input/logo.png"
+  harmonize:
+    enabled: true
+  qa:
+    enabled: true
+  export_video:
+    enabled: true
+
+sam3:
+  checkpoint: "models/sam3.pt"
+  model_size: "base"
+  device: "cuda"
+  confidence_threshold: 0.25

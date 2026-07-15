@@ -1,0 +1,32 @@
+# Python environment
+.venv/
+venv/
+ENV/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Local development caches & metrics
+cache/
+logs/
+*.log
+experiments/
+output/
+input/demo.mp4
+
+# Heavy weight checkpoints & downloads
+models/
+*.pt
+*.pth
+*.bin
+*.ckpt
+.huggingface/
+.cache/
+
+# IDE and workspace configurations
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
